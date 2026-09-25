@@ -30,7 +30,7 @@ app.add_middleware(
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-SIMULATOR_DIR = "/config/Desktop/BuildWithGemini/pharmsync-mobile/simulator"
+SIMULATOR_DIR = os.path.join(os.path.dirname(__file__), "simulator")
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -41,8 +41,11 @@ async def get_index():
 
 @app.get("/mobile", response_class=HTMLResponse)
 async def get_mobile():
-    with open(os.path.join(SIMULATOR_DIR, "index.html"), "r") as f:
-        return f.read()
+    sim_path = os.path.join(SIMULATOR_DIR, "index.html")
+    if os.path.exists(sim_path):
+        with open(sim_path, "r") as f:
+            return f.read()
+    return HTMLResponse("<h1>Mobile simulator not found</h1>")
 
 @app.post("/api/sync")
 async def run_sync_api(request: Request):
@@ -69,4 +72,5 @@ async def run_sync_api(request: Request):
     })
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)

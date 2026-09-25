@@ -109,6 +109,99 @@ def get_ncpdp_adjudication_string(rx_number: str) -> str:
     })
 
 
+from app.firestore_service import (
+    get_patient_prescriptions,
+    get_prescription_by_rx,
+    upsert_prescription,
+)
+
+
+def get_patient_prescriptions_from_firestore(patient_name: str = "Elena Rostova") -> str:
+    """Queries the Firestore 'prescriptions' collection for all active prescriptions for a patient.
+
+    Args:
+        patient_name: The name of the patient (e.g. 'Elena Rostova').
+
+    Returns:
+        JSON string listing the prescriptions stored in Firestore.
+    """
+    records = get_patient_prescriptions(patient_name)
+    return json.dumps({
+        "status": "SUCCESS",
+        "patient_name": patient_name,
+        "count": len(records),
+        "prescriptions": records
+    }, indent=2, default=str)
+
+
+def lookup_prescription_in_firestore(rx_number: str) -> str:
+    """Looks up a specific prescription by Rx number in the Firestore database.
+
+    Args:
+        rx_number: The prescription number to fetch (e.g. '208491', '301948', '415820').
+
+    Returns:
+        JSON string of the prescription document or error message if not found.
+    """
+    record = get_prescription_by_rx(rx_number)
+    if record:
+        return json.dumps({"status": "SUCCESS", "prescription": record}, indent=2, default=str)
+    return json.dumps({"status": "NOT_FOUND", "message": f"Prescription #{rx_number} not found in Firestore."}, indent=2)
+
+
+def save_prescription_to_firestore(
+    rx_number: str,
+    patient_name: str,
+    drug_name: str,
+    strength: str,
+    dosage_form: str,
+    fill_date: str,
+    quantity_dispensed: int,
+    daily_dose_frequency: float,
+    standard_copay: float,
+    sig_directions: str,
+    schedule_class: str = "Legend",
+    is_syncable: bool = True,
+    food_requirement: str = "None"
+) -> str:
+    """Saves or updates a prescription in the Firestore 'prescriptions' collection.
+
+    Args:
+        rx_number: The prescription number (document ID).
+        patient_name: Name of the patient.
+        drug_name: Name of the medication.
+        strength: Medication dosage strength (e.g. '500mg').
+        dosage_form: Formulation (e.g. 'Tablet').
+        fill_date: Date last filled in YYYY-MM-DD.
+        quantity_dispensed: Number of units dispensed.
+        daily_dose_frequency: Daily dosing rate (e.g. 1.0 or 2.0).
+        standard_copay: Standard copay amount in dollars.
+        sig_directions: Directions for use.
+        schedule_class: DEA schedule or 'Legend'.
+        is_syncable: True if eligible for Med-Sync.
+        food_requirement: Food instructions (e.g. 'With Meal', 'None').
+
+    Returns:
+        JSON confirmation string of the saved record.
+    """
+    saved = upsert_prescription(
+        rx_number=rx_number,
+        patient_name=patient_name,
+        drug_name=drug_name,
+        strength=strength,
+        dosage_form=dosage_form,
+        fill_date=fill_date,
+        quantity_dispensed=quantity_dispensed,
+        daily_dose_frequency=daily_dose_frequency,
+        standard_copay=standard_copay,
+        sig_directions=sig_directions,
+        schedule_class=schedule_class,
+        is_syncable=is_syncable,
+        food_requirement=food_requirement
+    )
+    return json.dumps({"status": "SUCCESS", "message": f"Prescription #{rx_number} saved to Firestore.", "data": saved}, indent=2, default=str)
+
+
 SYSTEM_INSTRUCTION = """You are PharmSync AI: The Smart Regimen & Refill Synchronization Guardian.
 
 Your mission is to eliminate medication therapy gaps, protect patients from erratic pharmacy trips, and resolve pharmacy counter rejections (NCPDP Reject 79: Refill Too Soon) before they happen.
@@ -130,9 +223,13 @@ Follow this clinical and optimization workflow:
 4. Edge Case Resilience:
    - Controlled Substances (C-II to C-IV): Lock out of auto-sync overrides due to statutory restrictions.
    - Non-Syncable Formulations (inhalers, eye drops): Apply Floating Refill logic pegged to nearest cycle.
+5. Persistent Firestore Database:
+   - Query patient records with `get_patient_prescriptions_from_firestore`.
+   - Inspect specific prescription records with `lookup_prescription_in_firestore`.
+   - Persist new or updated claims with `save_prescription_to_firestore`.
 
 When interacting with patients or pharmacists:
-- Use your tools `run_pharmsync_optimization` and `get_ncpdp_adjudication_string`.
+- Use your tools `run_pharmsync_optimization`, `get_ncpdp_adjudication_string`, and Firestore tools.
 - Format clinical schedules clearly into Morning, Dinner, and Bedtime pill decks.
 - Provide the exact NCPDP SCC 47 billing string and prorated copays so the patient walks out with all medications in one visit.
 """
@@ -144,7 +241,13 @@ root_agent = Agent(
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     instruction=SYSTEM_INSTRUCTION,
-    tools=[run_pharmsync_optimization, get_ncpdp_adjudication_string],
+    tools=[
+        run_pharmsync_optimization,
+        get_ncpdp_adjudication_string,
+        get_patient_prescriptions_from_firestore,
+        lookup_prescription_in_firestore,
+        save_prescription_to_firestore,
+    ],
 )
 
 app = App(
